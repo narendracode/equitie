@@ -4,6 +4,22 @@
 
 ---
 
+## Key Decisions at a Glance
+
+| Question | Answer | One-line reason |
+|---|---|---|
+| RAG / vector search? | **No (V1)** | Data is structured SQL — tools give exact results; RAG adds noise over financial figures |
+| Text-to-SQL? | **No** | LLM-generated SQL is unpredictable for financial calculations; pre-built tools are correct by construction |
+| Agent type? | **LangGraph ReAct** | Portfolio questions require composing multiple fetches; ReAct generalises across complexity |
+| New DB tables? | **chat_sessions + chat_messages only** | Zero changes to investor/portfolio schema |
+| Does the LLM do arithmetic? | **Never** | All MOIC / DPI / FX maths lives in Python tool functions; LLM only formats prose |
+| investor_id security | **Locked in graph state** | LLM cannot escape the investor's data scope — injected at every tool call, not passed as LLM param |
+| LLM temperature | **0** | Financial facts must be stable; personalisation is in the system prompt, not stochastic generation |
+| Conversation memory | **MemorySaver (V1) → DB-backed (V2)** | Prototype doesn't need cross-restart persistence |
+| Streaming protocol | **Server-Sent Events (SSE)** | Simpler than WebSockets for unidirectional streams; native browser EventSource |
+
+---
+
 ## Overview
 
 EquiTie is an AI-powered investor platform for managing SPV investments. Its centrepiece is a
@@ -548,11 +564,51 @@ No manual steps required after `docker compose up --build`.
 
 ---
 
+## Implementation Roadmap
+
+Build in this order — each layer depends only on the layer below it.
+
+```
+Phase 1 — Tools (packages/ai/src/ai/tools/)
+  ├── Write all 10 tool functions as plain Python
+  ├── Unit-test each tool against the seeded database
+  └── Verify edge cases: multi-round, partial exits, write-offs, FX conversion
+
+Phase 2 — Agent graph (packages/ai/src/ai/agent.py)
+  ├── Define AgentState (TypedDict)
+  ├── Wire ReAct graph: build_context → agent ⇄ tools → stream_response
+  ├── Build dynamic system prompt with personalisation mode
+  └── Test with synchronous invoke() calls first, then switch to astream_events()
+
+Phase 3 — API endpoints (packages/api/src/api/routers/chat.py)
+  ├── POST /chat/sessions  (create session, lock investor_id)
+  ├── GET  /chat/{id}/stream  (SSE wrapper around graph.astream_events)
+  ├── GET  /chat/{id}/messages  (history reload)
+  └── GET  /chat/investors  (dropdown population)
+
+Phase 4 — Database migration (packages/common/alembic/versions/0002_chat_tables.py)
+  ├── Add chat_sessions table
+  └── Add chat_messages table
+
+Phase 5 — Frontend chat UI (frontend/app/chat/)
+  ├── Investor selector dropdown
+  ├── Chat message list with streaming (EventSource)
+  ├── Tool-call status chips
+  └── Suggested starter prompts
+```
+
+**Why this order:**
+Tools can be developed and tested without any agent wiring. The agent can be tested from a Python
+shell without any HTTP layer. The API can be tested with curl before the frontend exists.
+Each phase is independently verifiable, which keeps debugging simple.
+
+---
+
 ## Decision Log
 
 | Question | Decision | Reason |
 |---|---|---|
-| RAG / vector search? | No (V1) | Data is structured SQL, not unstructured documents. Tools give exact results; RAG would add noise. pgvector available for V2 if free-text notes are added. |
+| RAG / vector search? | No (V1) | Data is structured SQL, not unstructured documents. Tools give exact results; RAG would add noise. pgvector available for V2 if free-text notes or a glossary are added. |
 | Text-to-SQL? | No | LLM-generated SQL is unpredictable for financial calculations. Pre-built tools are correct by construction. |
 | Agent type? | LangGraph ReAct | Multi-step data composition; conversation state; streaming; future extensibility (human-in-the-loop, clarification nodes). |
 | New DB tables? | Only chat_sessions + chat_messages | All investor/portfolio data is in existing tables. No ETL, no embeddings, no new fact tables. |
@@ -561,3 +617,4 @@ No manual steps required after `docker compose up --build`.
 | LLM temperature | 0 | Financial facts must be stable. Personalization is in the system prompt, not in stochastic generation. |
 | Conversation memory | LangGraph MemorySaver (V1) → DB-backed (V2) | Prototype doesn't need cross-restart persistence. |
 | Streaming protocol | Server-Sent Events (SSE) | Simpler than WebSockets for unidirectional server→client streams; native browser EventSource support. |
+| Why not pgvector now? | Not needed for structured data | pgvector is installed and ready; activate in V2 if qualitative company notes or a help KB are added. |
