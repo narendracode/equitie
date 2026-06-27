@@ -35,6 +35,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://equitie:equitie@postgres:5432/equitie}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-equitie}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
       DATA_DIR: /app/data
       APP_ENV: ${APP_ENV:-development}
     volumes:
@@ -55,6 +59,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://equitie:equitie@postgres:5432/equitie}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-equitie}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
       DATA_DIR: /app/data
       APP_ENV: ${APP_ENV:-development}
     volumes:
