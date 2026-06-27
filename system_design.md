@@ -360,14 +360,15 @@ chain, tool calls, and LLM payloads for any conversation turn.
 
 #### How `run_id` is captured
 
-LangGraph's `astream_events` emits a `metadata` dict on every event that includes `run_id`.
-The API layer reads this once (from the first event) and writes it to `agent_runs.run_id`.
+LangGraph's `astream_events` exposes `run_id` as a **top-level field** on every event object
+(not inside `metadata`). The API layer reads this once (from the first event) and writes it
+to `agent_runs.run_id`.
 
 ```python
 run_id = None
 async for event in graph.astream_events(input, config, version="v2"):
     if run_id is None:
-        run_id = event["metadata"].get("run_id")
+        run_id = event.get("run_id")   # top-level field, not event["metadata"]
     if event["event"] == "on_chat_model_stream":
         # forward token to SSE
 ```
@@ -454,12 +455,32 @@ content_block_delta  → {delta: {type: "text_delta",           ← answer text 
                                 text: "Your portfolio..."}}
 ```
 
+#### Streaming content block format (LangGraph 1.2+)
+
+Both thinking and answer text arrive via the same `on_chat_model_stream` LangGraph event.
+Each event carries a chunk whose `.content` is a list of block dicts. Distinguish by `type`:
+
+```python
+# Thinking chunk:  {"type": "thinking", "thinking": "I need to check...", "index": 0}
+# Text chunk:      {"type": "text",     "text": "Your portfolio...",       "index": 1}
+# Tool call:       {"type": "tool_use", "name": "portfolio_summary_tool",  "index": 2}
+# End-of-thinking: {"type": "thinking", "signature": "...",                "index": 0}
+# (signature blocks mark end of thinking block — skip them, they carry no display text)
+
+for block in chunk.content:
+    if isinstance(block, dict):
+        if block.get("type") == "thinking" and "thinking" in block:
+            yield SSE("thinking_delta", block["thinking"])
+        elif block.get("type") == "text" and "text" in block:
+            yield SSE("token", block["text"])
+```
+
 #### SSE event mapping (LangGraph → FastAPI → browser)
 
 | LangGraph event | SSE event type | Payload |
 |---|---|---|
-| `thinking_delta` content block delta | `thinking_delta` | `{"type":"thinking_delta","content":"..."}` |
-| `on_chat_model_stream` (text) | `token` | `{"type":"token","content":"..."}` |
+| `on_chat_model_stream` block `type=thinking` | `thinking_delta` | `{"type":"thinking_delta","content":"..."}` |
+| `on_chat_model_stream` block `type=text` | `token` | `{"type":"token","content":"..."}` |
 | `on_tool_start` | `tool_start` | `{"type":"tool_start","tool":"...","label":"..."}` |
 | `on_tool_end` | `tool_end` | `{"type":"tool_end","tool":"..."}` |
 | stream complete | `done` | `{"type":"done"}` |
@@ -799,6 +820,28 @@ packages/ai/src/ai/agent.py
   └── LangGraph ReAct graph: build_context → agent ⇄ tools → stream_response
       Includes: thinking mode config, LangSmith run_id capture from astream_events metadata
 ```
+
+---
+
+#### Batch 2 — Pending Tests
+
+The following scenarios were not covered during initial Batch 2 verification and must be tested
+before Batch 3 is considered unblocked.
+
+| # | Scenario | Investor / data | Question to ask | Expected behaviour |
+|---|---|---|---|---|
+| 1 | Zero-holdings investor | Henrik Sorensen or Lara Greco (no allocations) | "Give me an overview of my portfolio" | Tool returns empty allocations list; assistant says there are no active investments — does not hallucinate positions |
+| 2 | Pending allocation | Grace Okafor (allocation_status = Pending, contributed = 0) | "What have I invested so far?" | Allocation shows committed amount but £0 contributed; flagged as Pending status |
+| 3 | `search_company` disambiguation | Any investor who holds neither Northpeak company | "Tell me about my Northpeak position" | `search_company_tool` returns both Northpeak Analytics and Northpeak Health; agent asks the investor to confirm which one before proceeding |
+| 4 | Valuation history via agent | Investor holding a multi-mark company | "Show me the valuation history for [company]" | `valuation_history_tool` called; full mark time series returned with dates, share prices, and multiple-vs-entry per mark |
+| 5 | Account statement with date filter | Any investor | "Show me my transactions from Jan 2024 to Dec 2024" | `account_statement_tool` called with `start_date=2024-01-01` and `end_date=2024-12-31`; only lines within that range returned |
+| 6 | Down round | Investor holding Qubrium Series B | "How is my Qubrium position doing?" | Tool returns `multiple_vs_entry < 1`; assistant clearly states the current mark is below entry price |
+| 7 | Written-off deal | Investor holding Yappio | "What happened to my Yappio investment?" | Tool returns current_value = 0 and MOIC = 0; assistant describes it as written off |
+| 8 | Exited deal | Investor holding Helianthe Energy | "What did I make on Helianthe?" | Tool returns current_value = 0 with distributions; MOIC computed from distributions ÷ contributed only |
+| 9 | Partial secondary | Investor holding Tallybook | "What is my Tallybook position worth?" | Tool returns current_value using (1 − 0.3) × units × latest_price; distribution for the 30% realised portion also shown |
+| 10 | Simplified mode | Investor scoring ≤ 1 | "What is my MOIC?" | `personalization_mode = "simplified"`; MOIC defined in plain language, no VC jargon without explanation |
+| 11 | Multi-currency investor | EUR or AED reporting currency investor | "What is my total portfolio value?" | All amounts correctly converted and reported in EUR or AED, not USD or GBP |
+| 12 | LangSmith trace in dashboard | Any run | — (check after any of the above) | `run_id` returned by `astream_events` resolves to a live trace at `https://smith.langchain.com/public/{run_id}/r` showing tool calls, reasoning, and token counts |
 
 ---
 
