@@ -11,12 +11,14 @@
 | RAG / vector search? | **No (V1)** | Data is structured SQL — tools give exact results; RAG adds noise over financial figures |
 | Text-to-SQL? | **No** | LLM-generated SQL is unpredictable for financial calculations; pre-built tools are correct by construction |
 | Agent type? | **LangGraph ReAct** | Portfolio questions require composing multiple fetches; ReAct generalises across complexity |
-| New DB tables? | **chat_sessions + chat_messages only** | Zero changes to investor/portfolio schema |
+| New DB tables? | **chat_sessions + chat_messages + agent_runs** | Zero changes to investor/portfolio schema |
 | Does the LLM do arithmetic? | **Never** | All MOIC / DPI / FX maths lives in Python tool functions; LLM only formats prose |
 | investor_id security | **Locked in graph state** | LLM cannot escape the investor's data scope — injected at every tool call, not passed as LLM param |
 | LLM temperature | **0** | Financial facts must be stable; personalisation is in the system prompt, not stochastic generation |
 | Conversation memory | **MemorySaver (V1) → DB-backed (V2)** | Prototype doesn't need cross-restart persistence |
 | Streaming protocol | **Server-Sent Events (SSE)** | Simpler than WebSockets for unidirectional streams; native browser EventSource |
+| LangSmith tracing | **`agent_runs` table** | Per-run cost + debug trace URL linked to `chat_messages` for end-to-end observability |
+| Thinking mode | **Visible streaming** | Users see the assistant's reasoning in a collapsible panel; builds trust in financial decisions |
 
 ---
 
@@ -125,12 +127,28 @@ chat_sessions
   last_active    TIMESTAMP
 
 chat_messages
-  message_id     UUID  PK
-  session_id     UUID  FK → chat_sessions
-  role           VARCHAR  (user | assistant | tool)
-  content        TEXT
-  tool_name      VARCHAR  nullable (populated for tool messages)
-  created_at     TIMESTAMP
+  message_id        UUID  PK
+  session_id        UUID  FK → chat_sessions
+  role              VARCHAR  (user | assistant | tool)
+  content           TEXT
+  thinking_content  TEXT  nullable  (assistant messages only — persisted thinking summary)
+  tool_name         VARCHAR  nullable (populated for tool messages)
+  created_at        TIMESTAMP
+
+agent_runs
+  run_id               UUID  PK  (= LangSmith run_id from astream_events metadata)
+  session_id           UUID  FK → chat_sessions
+  user_message_id      UUID  FK → chat_messages  (the triggering user turn)
+  assistant_message_id UUID  FK → chat_messages  nullable — set on completion
+  trace_url            VARCHAR  (e.g. https://smith.langchain.com/o/<org>/r/<run_id>)
+  model_name           VARCHAR  (e.g. claude-sonnet-4-6)
+  prompt_tokens        INTEGER
+  completion_tokens    INTEGER  (includes thinking tokens — billed as output on Sonnet 4.6)
+  cost_usd             NUMERIC(10,6)
+  duration_ms          INTEGER
+  status               VARCHAR  (running | completed | error)
+  created_at           TIMESTAMP
+  completed_at         TIMESTAMP  nullable
 ```
 
 > For V1 prototype, LangGraph's in-memory `MemorySaver` checkpointer can be used
@@ -309,7 +327,8 @@ Browser (Next.js)
 FastAPI (api package)
 │  POST /chat/sessions                  → create session, return session_id
 │  GET  /chat/{session_id}/stream       → SSE endpoint
-│       yields: data: {"type":"token","content":"..."}
+│       yields: data: {"type":"thinking_delta","content":"..."}   ← reasoning chunk
+│               data: {"type":"token","content":"..."}            ← answer text chunk
 │               data: {"type":"tool_start","tool":"get_portfolio_summary"}
 │               data: {"type":"tool_end","tool":"...","summary":"..."}
 │               data: {"type":"done"}
@@ -330,6 +349,156 @@ Frontend behaviour:
 - Tool call events show a brief status ("Fetching your positions…") while tool runs
 - Text streams in as tokens arrive
 - On `done`, message is finalised in the chat history
+
+---
+
+### LangSmith Integration
+
+**Goal:** Record a LangSmith trace URL and token cost for every agent run and link it to the
+`chat_messages` rows it produced — so a developer can click one URL to see the full reasoning
+chain, tool calls, and LLM payloads for any conversation turn.
+
+#### How `run_id` is captured
+
+LangGraph's `astream_events` emits a `metadata` dict on every event that includes `run_id`.
+The API layer reads this once (from the first event) and writes it to `agent_runs.run_id`.
+
+```python
+run_id = None
+async for event in graph.astream_events(input, config, version="v2"):
+    if run_id is None:
+        run_id = event["metadata"].get("run_id")
+    if event["event"] == "on_chat_model_stream":
+        # forward token to SSE
+```
+
+#### How the trace URL is constructed
+
+LangSmith trace URLs follow the pattern:
+
+```
+https://smith.langchain.com/o/{org_id}/projects/p/{project_id}/runs/{run_id}
+```
+
+The simpler shortlink (`/r/{run_id}`) also works and does not require org/project IDs to be
+hardcoded. Stored in `agent_runs.trace_url` and shown in the developer dashboard.
+
+#### How cost is retrieved and stored
+
+After the graph run completes, the LangSmith SDK is queried once (async, in a background task
+so the SSE response is not delayed):
+
+```python
+# After run completes — run in background, not on the SSE hot path
+from langsmith import Client as LangSmithClient
+
+async def record_run_cost(run_id: str, agent_run_id: UUID, db: AsyncSession):
+    client = LangSmithClient()
+    run = client.read_run(str(run_id))
+    prompt_tokens     = run.prompt_tokens or 0
+    completion_tokens = run.completion_tokens or 0  # includes thinking tokens
+    total_tokens      = run.total_tokens or 0
+    # Sonnet 4.6 pricing: $3/1M input, $15/1M output
+    cost_usd = (prompt_tokens * 3 + completion_tokens * 15) / 1_000_000
+    await update_agent_run(db, agent_run_id, prompt_tokens, completion_tokens, cost_usd)
+```
+
+> **Note:** LangSmith SDK `read_run` returns token counts that include thinking tokens in
+> `completion_tokens` — they are billed as output tokens on Sonnet 4.6 at $15.00/1M.
+
+#### Linking to chat_messages
+
+| Field | Value |
+|---|---|
+| `agent_runs.user_message_id` | FK to the `chat_messages` row for the triggering user turn |
+| `agent_runs.assistant_message_id` | FK to the `chat_messages` row for the completed assistant reply (set on completion, null while running) |
+
+This lets a developer query: "show me the LangSmith trace for the message where the assistant
+said X" — a single JOIN from `chat_messages` → `agent_runs` provides the trace URL and cost.
+
+---
+
+### Thinking Mode
+
+**Goal:** Claude `claude-sonnet-4-6` surfaces its reasoning process as a visible, streaming
+"thinking" block. Users see *why* the assistant arrived at an answer — which tools it decided
+to call, what conditions it considered, what it ruled out. This builds trust for financial
+decisions and makes the assistant feel transparent rather than like a black box.
+
+#### API configuration
+
+```python
+# Adaptive thinking — budget_tokens is deprecated on Sonnet 4.6; do not use
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    thinking={"type": "adaptive", "display": "summarized"},  # stream visible reasoning
+    max_tokens=4096,
+    messages=[...],
+)
+```
+
+- `thinking.type = "adaptive"` — Claude decides how much to think based on question complexity.
+- `thinking.display = "summarized"` — the thinking content is streamed as readable text (not
+  omitted or redacted). Default is `"omitted"` which returns an empty thinking field.
+- `budget_tokens` is deprecated on Sonnet 4.6 — sending it causes a 400 error.
+
+#### Streaming event shape
+
+The Anthropic SDK emits two distinct delta types during streaming:
+
+```
+content_block_start  → {content_block: {type: "thinking"}}   ← thinking block begins
+content_block_delta  → {delta: {type: "thinking_delta",       ← thinking text chunks
+                                thinking: "I need to check..."}}
+content_block_delta  → {delta: {type: "text_delta",           ← answer text chunks
+                                text: "Your portfolio..."}}
+```
+
+#### SSE event mapping (LangGraph → FastAPI → browser)
+
+| LangGraph event | SSE event type | Payload |
+|---|---|---|
+| `thinking_delta` content block delta | `thinking_delta` | `{"type":"thinking_delta","content":"..."}` |
+| `on_chat_model_stream` (text) | `token` | `{"type":"token","content":"..."}` |
+| `on_tool_start` | `tool_start` | `{"type":"tool_start","tool":"...","label":"..."}` |
+| `on_tool_end` | `tool_end` | `{"type":"tool_end","tool":"..."}` |
+| stream complete | `done` | `{"type":"done"}` |
+
+#### Persistence
+
+The completed thinking summary is stored in `chat_messages.thinking_content` for the assistant
+row. This means:
+
+- When the user reloads the chat history, the thinking panel can be restored.
+- Developers can query which questions triggered deep reasoning vs. shallow answers.
+- The thinking content is stored alongside the answer but retrieved separately — it is never
+  shown inline in the answer text.
+
+#### Frontend: collapsible reasoning panel
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  [▶ See reasoning]  ← collapsed by default              │
+│                                                         │
+│  ▼ Expanded:                                            │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │ I need to check the investor's allocations to   │   │
+│  │ calculate MOIC. I'll call get_portfolio_summary  │   │
+│  │ first. The user's reporting currency is GBP so  │   │
+│  │ I'll need FX conversion...                      │   │
+│  └─────────────────────────────────────────────────┘   │
+│                                                         │
+│  Your overall MOIC is 1.8×, meaning your investments    │
+│  have grown to 1.8 times what you put in...             │
+└─────────────────────────────────────────────────────────┘
+```
+
+- The collapsible panel streams `thinking_delta` events in real time (user sees reasoning build
+  up while tool calls run).
+- The final answer streams below once the `token` events begin.
+- Panel state (expanded/collapsed) is persisted per-session in localStorage.
+- On history reload, the thinking content is loaded from `chat_messages.thinking_content` and
+  the panel is restored in collapsed state.
 
 ---
 
@@ -588,7 +757,8 @@ Phase 3 — API endpoints (packages/api/src/api/routers/chat.py)
 
 Phase 4 — Database migration (packages/common/alembic/versions/0002_chat_tables.py)
   ├── Add chat_sessions table
-  └── Add chat_messages table
+  ├── Add chat_messages table (with thinking_content column)
+  └── Add agent_runs table (run_id, FKs to chat_messages, trace_url, token counts, cost_usd)
 
 Phase 5 — Frontend chat UI (frontend/app/chat/)
   ├── Investor selector dropdown
@@ -618,3 +788,6 @@ Each phase is independently verifiable, which keeps debugging simple.
 | Conversation memory | LangGraph MemorySaver (V1) → DB-backed (V2) | Prototype doesn't need cross-restart persistence. |
 | Streaming protocol | Server-Sent Events (SSE) | Simpler than WebSockets for unidirectional server→client streams; native browser EventSource support. |
 | Why not pgvector now? | Not needed for structured data | pgvector is installed and ready; activate in V2 if qualitative company notes or a help KB are added. |
+| LangSmith tracing | `agent_runs` table + background cost fetch | Storing trace URL + token cost per agent run gives end-to-end debugging and cost visibility without blocking the SSE response. Linked to `chat_messages` via FK so any message can be traced back to its LangSmith run. |
+| Thinking mode API | `thinking: {type: "adaptive", display: "summarized"}` on Sonnet 4.6 | `budget_tokens` is deprecated on Sonnet 4.6 (causes 400 errors). Adaptive thinking lets Claude decide how much to think per question. `display: "summarized"` is required to receive the thinking content — the default (`"omitted"`) returns an empty string. |
+| Thinking UX | Collapsible panel, streams alongside answer | Thinking content is visually separated from the answer so it does not interrupt reading. Collapsed by default because most users want the answer first; toggle available for users who want to verify reasoning. |
