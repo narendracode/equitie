@@ -735,42 +735,123 @@ No manual steps required after `docker compose up --build`.
 
 ## Implementation Roadmap
 
-Build in this order — each layer depends only on the layer below it.
+Four batches, each independently reviewable before the next begins. Nothing in a later batch
+can be built or tested until the prior one is verified against the live database.
+
+### Dependency Chain
 
 ```
-Phase 1 — Tools (packages/ai/src/ai/tools/)
-  ├── Write all 10 tool functions as plain Python
-  ├── Unit-test each tool against the seeded database
-  └── Verify edge cases: multi-round, partial exits, write-offs, FX conversion
-
-Phase 2 — Agent graph (packages/ai/src/ai/agent.py)
-  ├── Define AgentState (TypedDict)
-  ├── Wire ReAct graph: build_context → agent ⇄ tools → stream_response
-  ├── Build dynamic system prompt with personalisation mode
-  └── Test with synchronous invoke() calls first, then switch to astream_events()
-
-Phase 3 — API endpoints (packages/api/src/api/routers/chat.py)
-  ├── POST /chat/sessions  (create session, lock investor_id)
-  ├── GET  /chat/{id}/stream  (SSE wrapper around graph.astream_events)
-  ├── GET  /chat/{id}/messages  (history reload)
-  └── GET  /chat/investors  (dropdown population)
-
-Phase 4 — Database migration (packages/common/alembic/versions/0002_chat_tables.py)
-  ├── Add chat_sessions table
-  ├── Add chat_messages table (with thinking_content column)
-  └── Add agent_runs table (run_id, FKs to chat_messages, trace_url, token counts, cost_usd)
-
-Phase 5 — Frontend chat UI (frontend/app/chat/)
-  ├── Investor selector dropdown
-  ├── Chat message list with streaming (EventSource)
-  ├── Tool-call status chips
-  └── Suggested starter prompts
+Batch 1 (DB Migration + Tools)
+    └──► Batch 2 (AI Agent)
+              └──► Batch 3 (API + Backend Services)
+                        └──► Batch 4 (Frontend)
 ```
 
-**Why this order:**
-Tools can be developed and tested without any agent wiring. The agent can be tested from a Python
-shell without any HTTP layer. The API can be tested with curl before the frontend exists.
-Each phase is independently verifiable, which keeps debugging simple.
+---
+
+### Batch 1 — Data Foundation
+
+**Depends on:** Nothing (runs against the already-seeded DB)
+**Verify by:** Calling each tool function directly from a Python shell; spot-checking all 13 edge
+cases return correct JSON.
+
+```
+packages/common/alembic/versions/0002_chat_tables.py
+  └── Migration: chat_sessions, chat_messages (+ thinking_content), agent_runs
+
+packages/common/src/common/models/chat.py
+  └── SQLAlchemy 2.0 Mapped[] models for the 3 new tables
+
+packages/ai/src/ai/tools/
+  ├── __init__.py                 exports all 10 tools
+  ├── portfolio_summary.py        get_portfolio_summary
+  ├── position_detail.py          get_position_detail
+  ├── upcoming_obligations.py     get_upcoming_obligations
+  ├── distributions.py            get_distributions
+  ├── fee_detail.py               get_fee_detail
+  ├── valuation_history.py        get_valuation_history
+  ├── account_statement.py        get_account_statement
+  ├── fx_rates.py                 get_fx_rates
+  ├── search_company.py           search_company
+  └── investor_profile.py         get_investor_profile
+```
+
+---
+
+### Batch 2 — AI Agent
+
+**Depends on:** Batch 1 (tool functions + DB models)
+**Verify by:** `await graph.ainvoke(input, config)` from a Python shell returns correct prose for
+3–4 sample questions; `run_id` appears in event metadata; thinking text is present in response.
+
+```
+packages/ai/src/ai/state.py
+  └── AgentState TypedDict: investor_id, investor_profile, personalization_mode,
+      system_prompt, messages
+
+packages/ai/src/ai/personalisation.py
+  └── Scoring function → "simplified" | "standard" | "expert"
+
+packages/ai/src/ai/prompts.py
+  └── Dynamic system prompt builder: fixed section + mode-specific tone section
+
+packages/ai/src/ai/agent.py
+  └── LangGraph ReAct graph: build_context → agent ⇄ tools → stream_response
+      Includes: thinking mode config, LangSmith run_id capture from astream_events metadata
+```
+
+---
+
+### Batch 3 — API + Backend Services
+
+**Depends on:** Batch 2 (agent graph) + Batch 1 (DB models for persistence)
+**Verify by:** All 4 endpoints testable via Swagger UI; SSE stream visible in curl;
+`agent_runs` row written to DB after each turn with populated `cost_usd`.
+
+```
+packages/api/src/api/routers/chat.py
+  ├── GET  /chat/investors          investor dropdown
+  ├── POST /chat/sessions           create session, lock investor_id
+  ├── GET  /chat/{id}/stream        SSE: thinking_delta + token + tool_start/end + done
+  └── GET  /chat/{id}/messages      history reload
+
+packages/api/src/api/services/chat_service.py
+  └── Persist chat_sessions, chat_messages (with thinking_content), agent_runs
+
+packages/api/src/api/services/langsmith_service.py
+  └── Background async task: read_run(run_id) → compute cost_usd → update agent_runs
+```
+
+---
+
+### Batch 4 — Frontend
+
+**Depends on:** Batch 3 (all API endpoints live)
+**Verify by:** Full browser end-to-end — select investor, ask a question, thinking panel streams
+live, answer appears below.
+
+```
+frontend/app/page.tsx
+  └── Investor selector → POST /chat/sessions → redirect to /chat
+
+frontend/app/chat/page.tsx
+  └── Chat page shell: session context, starter prompts
+
+frontend/hooks/useChatStream.ts
+  └── EventSource hook — handles thinking_delta, token, tool_start, tool_end, done
+
+frontend/components/chat/MessageList.tsx
+  └── User (right) + assistant (left) message rendering
+
+frontend/components/chat/ThinkingPanel.tsx
+  └── Collapsible reasoning panel: streams live, collapsed by default, state in localStorage
+
+frontend/components/chat/ToolStatusChip.tsx
+  └── "Fetching your positions…" chip shown during tool calls
+
+frontend/components/chat/ChatInput.tsx
+  └── Input box + send button
+```
 
 ---
 
