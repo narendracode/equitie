@@ -8,6 +8,7 @@ from common.models.fee import Fee
 from common.models.distribution import Distribution
 from common.models.statement_line import StatementLine
 from common.models.fx_rate import FxRate
+from common.models.chat import ChatSession, ChatMessage, AgentRun
 
 __all__ = [
     "PortfolioCompany",
@@ -20,4 +21,7 @@ __all__ = [
     "Distribution",
     "StatementLine",
     "FxRate",
+    "ChatSession",
+    "ChatMessage",
+    "AgentRun",
 ]
