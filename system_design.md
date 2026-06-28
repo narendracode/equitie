@@ -2,17 +2,6 @@
 
 ---
 
-## Overview
-
-EquiTie is an AI-powered investor platform for managing SPV investments. Its centrepiece is a
-**conversational Investor Assistant** that answers natural-language questions about an investor's
-own portfolio personalised to their profile while keeping every number provably correct.
-
-The platform models the full SPV investment lifecycle: capital commitments, tranched capital calls,
-fee schedules, mark-to-market valuations, distributions, and signed cashflow statements.
-
----
-
 ## Key Decisions at a Glance
 
 | Question | Answer | One-line reason |
