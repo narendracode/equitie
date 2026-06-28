@@ -35,4 +35,4 @@ RUN chmod +x /entrypoint.sh /app/packages/api/worker_entrypoint.sh
 
 EXPOSE 8000
 
-ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/entrypoint.sh"]
