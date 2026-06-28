@@ -3,6 +3,7 @@
         test-eval test-eval-k \
         test-routing test-routing-k \
         test-scope test-scope-k \
+        test-persona test-persona-k \
         test-all
 
 # ── Docker ──────────────────────────────────────────────────────────────────
@@ -128,6 +129,18 @@ test-scope-k:
 		DATABASE_URL=postgresql://equitie:equitie@localhost:5432/equitie \
 		uv run pytest packages/ai/tests/test_scope_isolation.py -v -k "$(k)"'
 
+# Layer 5: personalisation compliance (2 fast DB tests + 4 eval LLM-as-judge tests)
+test-persona:
+	bash -c 'set -a; [ -f .env ] && . ./.env; set +a; \
+		DATABASE_URL=postgresql://equitie:equitie@localhost:5432/equitie \
+		uv run pytest packages/ai/tests/test_personalisation.py -v'
+
+# Run a single personalisation test by keyword: make test-persona-k k=contrast
+test-persona-k:
+	bash -c 'set -a; [ -f .env ] && . ./.env; set +a; \
+		DATABASE_URL=postgresql://equitie:equitie@localhost:5432/equitie \
+		uv run pytest packages/ai/tests/test_personalisation.py -v -k "$(k)"'
+
 # All layers combined
 test-all:
 	bash -c 'set -a; [ -f .env ] && . ./.env; set +a; \
@@ -157,4 +170,6 @@ help:
 	@echo "make test-routing-k k=<id>   - Layer 3: run single routing case by ID keyword"
 	@echo "make test-scope              - Layer 4: scope isolation (fast DB + eval LLM)"
 	@echo "make test-scope-k k=<kw>     - Layer 4: run single scope test by keyword"
+	@echo "make test-persona            - Layer 5: personalisation compliance (LLM-as-judge)"
+	@echo "make test-persona-k k=<kw>   - Layer 5: run single personalisation test by keyword"
 	@echo "make test-all                - All layers combined"

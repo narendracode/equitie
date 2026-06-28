@@ -197,6 +197,7 @@ EquiTie has two test layers:
 | **Layer 2 — number fidelity evals** | 6 end-to-end tests: every stated figure traced back to tool output | ~2.5 min | ~$0.20 |
 | **Layer 3 — tool routing** | 20 golden-set questions, one per tool/scenario — checks the right tool was called | ~6 min | ~$0.60 |
 | **Layer 4 — scope isolation** | 3 fast DB tests + 4 eval tests: no investor can ever see another's data | 1 s + ~1 min | ~$0.12 |
+| **Layer 5 — personalisation compliance** | 2 fast DB tests + 4 LLM-as-judge tests: simplified vs expert style verified | 1 s + ~1.5 min | ~$0.29 |
 
 ### Prerequisites
 
@@ -342,10 +343,56 @@ make test-scope-k k="not eval"    # fast tests only
 | `test_scope_named_investor_request_blocked` | Eval | Asking by investor name produces no foreign financial figures |
 | `test_scope_out_of_scope_position_returns_not_found` | Eval | Investor with zero holdings asking about a deal returns empty, not another's data |
 
+### Layer 5 — Personalisation compliance
+
+These verify that the agent's communication style adapts to each investor's assigned mode. A separate Claude judge call evaluates each response against a written rubric at `temperature=0` (deterministic scoring).
+
+The 2 fast tests run with `make test-tools`. The 4 LLM-as-judge tests require the API.
+
+```bash
+# Run all 6 personalisation tests (2 fast + 4 LLM-as-judge, ~1.5 minutes)
+make test-persona
+
+# Run a single test by keyword
+make test-persona-k k=simplified
+make test-persona-k k=expert
+make test-persona-k k=contrast
+make test-persona-k k=jargon
+make test-persona-k k="not eval"    # fast tests only
+```
+
+#### What each test verifies
+
+| Test | Type | What it checks |
+|---|---|---|
+| `test_personalisation_mode_scoring` | Fast | `compute_mode` returns correct mode for INV016/INV001/INV002 |
+| `test_personalisation_system_prompt_contains_mode_markers` | Fast | System prompt has "plain English" for simplified, "data-dense" for expert |
+| `test_personalisation_simplified_plain_language` | Eval | Isabella Rossi's portfolio overview is scored ≥ 7/10 on simplified rubric |
+| `test_personalisation_expert_technical_density` | Eval | Selina Voss's portfolio overview is scored ≥ 7/10 on expert rubric |
+| `test_personalisation_simplified_no_unexplained_jargon` | Eval | Simplified investor's fee question response explains all VC terms |
+| `test_personalisation_style_contrast` | Eval | Same question → simplified passes simplified rubric AND fails expert rubric |
+
+#### Judge rubrics (pass threshold: score ≥ 7 / 10)
+
+**Simplified** — plain English, every VC term explained on first use (e.g. "MOIC (how many times your money has grown)"), bottom-line-first, warm accessible tone.
+
+**Expert** — data-dense, VC/PE vocabulary (MOIC, DPI, RVPI, carry, IRR) used freely without definitions, leads with metrics, no hand-holding.
+
+**Standard** — professional language, defines unfamiliar terms once, headline + breakdown structure.
+
+#### How the LLM-as-judge works
+
+1. Agent is invoked normally to produce a response for the investor
+2. A separate Claude call (temperature=0) receives: the investor's profile, the expected mode, the rubric, and the response text
+3. Judge returns `{"pass": bool, "score": 0–10, "violations": [...], "reasoning": "..."}`
+4. Test asserts `pass == true` and `score >= 7`
+
+The contrast test additionally checks that the simplified response *fails* the expert rubric — confirming the two modes produce genuinely different output, not just superficially different phrasing.
+
 ### All layers combined
 
 ```bash
-make test-all   # runs all 26 + 6 + 20 + 8 tests (~10 minutes)
+make test-all   # runs all 26 + 6 + 20 + 8 + 6 tests (~12 minutes)
 ```
 
 ### Test file locations
@@ -357,7 +404,8 @@ packages/ai/tests/
 ├── test_edge_cases.py          # Layer 1: 26 tests covering all 13 edge cases
 ├── test_number_fidelity.py     # Layer 2: 6 end-to-end fidelity evals
 ├── test_tool_routing.py        # Layer 3: 20 routing golden-set cases
-└── test_scope_isolation.py     # Layer 4: 3 fast + 4 eval scope isolation tests
+├── test_scope_isolation.py     # Layer 4: 3 fast + 4 eval scope isolation tests
+└── test_personalisation.py     # Layer 5: 2 fast + 4 LLM-as-judge personalisation tests
 ```
 
 ---
