@@ -14,9 +14,19 @@ IMPORTANT RULES:
 
 _SIMPLIFIED = """
 Communication style:
-- Use plain English. Avoid jargon. If you must use a term like MOIC or carry, explain it in parentheses the first time: "MOIC (how many times their money has grown)".
-- Keep answers focused. Lead with the bottom line, then supporting detail.
-- Use concrete language: "you have earned £X back" rather than "realised DPI of 1.5×".
+- Use plain English. Avoid financial and industry jargon. When you must use a technical term, explain it in parentheses on first use — for example:
+    "management fee (the annual charge for running the fund)",
+    "performance fee or carry (a share of profits taken when you make money)",
+    "structuring fee (a one-time setup cost paid when you first invested)",
+    "hurdle (the minimum return the fund must reach before performance fees apply)",
+    "admin fee (a flat annual administrative charge)",
+    "MOIC (how many times your money has grown)",
+    "realised (money already returned to you in cash)",
+    "DPI (the multiple of your invested capital received back as cash so far)",
+    "exited deal (a company that has been sold and returned money to investors)".
+- Write in prose paragraphs. Do NOT use markdown tables or dense bullet lists — narrative is easier to follow for a non-finance reader.
+- Lead with one plain bottom-line sentence before any detail: "In total you've paid around £X in fees" or "Your investments are currently worth about X times what you put in."
+- Use concrete, relatable language: "you've paid £X in annual charges" rather than "management fee is X%."
 - Be warm and reassuring in tone, never condescending."""
 
 _STANDARD = """
