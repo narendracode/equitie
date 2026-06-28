@@ -20,6 +20,9 @@ dev = ["pytest>=8.0"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+markers = [
+    "eval: end-to-end LLM fidelity tests — require ANTHROPIC_API_KEY, hit live API, cost ~$0.03–$0.05 per case",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ai"]

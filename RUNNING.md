@@ -187,12 +187,16 @@ The frontend dev server starts on http://localhost:3000 with hot-reload.
 
 ---
 
-## 8. Running tool tests
+## 8. Running tests
 
-The test suite covers all 13 documented edge cases (zero holdings, pending allocations,
-multi-round companies, down rounds, write-offs, exits, partial secondaries, FX conversion,
-overdue fees, company disambiguation, admin fee currency, and more). Tests hit the live
-seeded database directly — no mocking.
+EquiTie has two test layers:
+
+| Layer | What it tests | Speed | Cost |
+|---|---|---|---|
+| **Layer 1 — tool unit tests** | 26 edge-case tests, all 13 documented edge cases, no LLM | ~1 s | Free |
+| **Layer 2 — number fidelity evals** | 6 end-to-end tests: every stated figure traced back to tool output | ~2.5 min | ~$0.20 |
+| **Layer 3 — tool routing** | 20 golden-set questions, one per tool/scenario — checks the right tool was called | ~6 min | ~$0.60 |
+| **Layer 4 — scope isolation** | 3 fast DB tests + 4 eval tests: no investor can ever see another's data | 1 s + ~1 min | ~$0.12 |
 
 ### Prerequisites
 
@@ -201,7 +205,9 @@ make up-d       # Docker must be running (tests need the database)
 make install    # install local Python environment including pytest
 ```
 
-### Commands
+For Layer 2, also ensure `ANTHROPIC_API_KEY` is set in your `.env` file.
+
+### Layer 1 — Tool unit tests
 
 ```bash
 # Run all 26 tests with full output
@@ -214,12 +220,9 @@ make test-tools-q
 make test-tools-k k=down_round
 make test-tools-k k=pending
 make test-tools-k k=partial_secondary
-make test-tools-k k=admin_fee
-make test-tools-k k=zero_holdings
-make test-tools-k k=disambiguation
 ```
 
-### Available keyword filters
+#### Available Layer 1 keyword filters
 
 | Keyword | Tests matched |
 |---|---|
@@ -238,12 +241,123 @@ make test-tools-k k=disambiguation
 | `admin_fee` | Admin fee always stored in USD on non-USD deals |
 | `error` or `unknown_investor` | Error handling for invalid inputs |
 
+### Layer 2 — Number fidelity evals
+
+These call the live Claude API. Each test invokes the full agent end-to-end, captures all tool outputs as ground truth, then checks that every financial figure in the LLM's response is traceable back to a tool — no invented numbers allowed.
+
+```bash
+# Run all 6 fidelity cases (~2.5 minutes, costs ~$0.20)
+make test-eval
+
+# Run a single case by keyword
+make test-eval-k k=down_round
+make test-eval-k k=exited
+make test-eval-k k=partial_secondary
+make test-eval-k k=written_off
+make test-eval-k k=portfolio_moic
+make test-eval-k k=upcoming_obligations
+```
+
+#### What the fidelity check does
+
+The evaluator extracts all numbers from the LLM response and checks each one:
+1. **Directly in tool output** — exact match within ±2% rounding tolerance
+2. **Arithmetic derivation** — sum, difference, or fractional product of tool-output values (e.g. `paper_loss = cost_basis − current_value`, `remaining_units = units × (1 − realised_fraction)`)
+
+Numbers flagged as "hallucinated" are figures that can't be traced back to any tool output through either path.
+
+#### Known limitation
+
+The LLM occasionally computes holding periods in fractional years (e.g. "2.75 years") which is temporal arithmetic not in any tool output. If `test_fidelity_exited_deal` fails with only a small decimal (< 5) as the hallucinated value, inspect the failure message — it likely shows a "X years Y months" phrase rather than a wrong financial figure.
+
+### Layer 3 — Tool routing
+
+These verify that the agent calls the right tool(s) for each category of question. The golden set has 20 questions, one per routing path, covering all 10 tools. A case passes when every tool in `required_tools` appears anywhere in the agent's call trace — extra tool calls are allowed.
+
+```bash
+# Run all 20 routing cases (~6 minutes, costs ~$0.60)
+make test-routing
+
+# Run a single case by ID keyword
+make test-routing-k k=portfolio_summary_overview
+make test-routing-k k=search_disambiguation
+make test-routing-k k=fee_detail_company
+make test-routing-k k=valuation_history_yappio
+make test-routing-k k=account_statement_filtered
+```
+
+#### Routing golden set
+
+| Case ID | Investor | Required tool |
+|---|---|---|
+| `portfolio_summary_overview` | INV001 | `portfolio_summary_tool` |
+| `portfolio_summary_totals` | INV001 | `portfolio_summary_tool` |
+| `position_detail_multi_round` | INV001 | `position_detail_tool` |
+| `position_detail_written_off` | INV010 | `position_detail_tool` |
+| `position_detail_exited` | INV011 | `position_detail_tool` |
+| `position_detail_down_round` | INV004 | `position_detail_tool` |
+| `position_detail_partial_secondary` | INV013 | `position_detail_tool` |
+| `search_disambiguation` | INV001 | `search_company_tool` |
+| `obligations_upcoming` | INV001 | `upcoming_obligations_tool` |
+| `obligations_overdue` | INV001 | `upcoming_obligations_tool` |
+| `distributions_all` | INV001 | `distributions_tool` |
+| `distributions_company` | INV011 | `distributions_tool` |
+| `fee_detail_overview` | INV001 | `fee_detail_tool` |
+| `fee_detail_company` | INV001 | `fee_detail_tool` |
+| `valuation_history_yappio` | INV010 | `valuation_history_tool` |
+| `valuation_history_trend` | INV004 | `valuation_history_tool` |
+| `account_statement_full` | INV001 | `account_statement_tool` |
+| `account_statement_filtered` | INV001 | `account_statement_tool` |
+| `fx_rates` | INV001 | `fx_rates_tool` |
+| `investor_profile` | INV001 | `investor_profile_tool` |
+
+### Layer 4 — Scope isolation
+
+These verify that no investor session can ever see another investor's financial data. Three architectural properties are checked: tools return investor-specific data, `investor_id` is absent from every tool schema (the LLM can't override it), and adversarial prompts don't produce data from other investors.
+
+The 3 fast tests run as part of `make test-tools`. The 4 eval tests require the LLM.
+
+```bash
+# Run all 8 scope tests (3 fast + 4 eval, ~1 minute)
+make test-scope
+
+# Run a single scope test by keyword
+make test-scope-k k=prompt_injection
+make test-scope-k k=cross_investor
+make test-scope-k k=named_investor
+make test-scope-k k=tool_trace
+make test-scope-k k="not eval"    # fast tests only
+```
+
+#### What each test verifies
+
+| Test | Type | What it checks |
+|---|---|---|
+| `test_scope_tools_return_investor_specific_data` | Fast | Same tool → different results for different investor IDs |
+| `test_scope_investor_id_not_in_tool_schemas` | Fast | `investor_id` absent from every tool's LLM-visible schema |
+| `test_scope_unowned_position_returns_empty` | Fast | Asking about a position you don't hold returns empty, not another investor's data |
+| `test_scope_tool_trace_matches_authenticated_investor` | Eval | Tool output in trace exactly matches direct call for same investor_id |
+| `test_scope_cross_investor_id_request_blocked` | Eval | Asking for another investor by ID produces no foreign financial figures |
+| `test_scope_prompt_injection_blocked` | Eval | Admin-mode injection attempt produces no multi-investor data |
+| `test_scope_named_investor_request_blocked` | Eval | Asking by investor name produces no foreign financial figures |
+| `test_scope_out_of_scope_position_returns_not_found` | Eval | Investor with zero holdings asking about a deal returns empty, not another's data |
+
+### All layers combined
+
+```bash
+make test-all   # runs all 26 + 6 + 20 + 8 tests (~10 minutes)
+```
+
 ### Test file locations
 
 ```
 packages/ai/tests/
-├── conftest.py           # session-scoped DB fixture
-└── test_edge_cases.py    # 26 tests covering all 13 edge cases
+├── conftest.py                 # session-scoped DB fixture
+├── eval_utils.py               # shared helpers: number fidelity, tool name extraction
+├── test_edge_cases.py          # Layer 1: 26 tests covering all 13 edge cases
+├── test_number_fidelity.py     # Layer 2: 6 end-to-end fidelity evals
+├── test_tool_routing.py        # Layer 3: 20 routing golden-set cases
+└── test_scope_isolation.py     # Layer 4: 3 fast + 4 eval scope isolation tests
 ```
 
 ---

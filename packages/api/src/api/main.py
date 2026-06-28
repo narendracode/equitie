@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import investors, deals, companies, health, chat
+from api.routers import investors, deals, companies, health, chat, actions
 
 app = FastAPI(
     title="EquiTie API",
@@ -22,3 +22,4 @@ app.include_router(investors.router, prefix="/investors", tags=["investors"])
 app.include_router(deals.router, prefix="/deals", tags=["deals"])
 app.include_router(companies.router, prefix="/portfolio-companies", tags=["companies"])
 app.include_router(chat.router, prefix="/chat", tags=["chat"])
+app.include_router(actions.router, prefix="/api/v1/actions", tags=["actions"])
