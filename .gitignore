@@ -39,7 +39,7 @@ Thumbs.db
 *.log
 celerybeat-schedule
 
-data
+# data
 case_study.pdf
 dataset_guide.md
 
