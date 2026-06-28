@@ -1,4 +1,5 @@
-.PHONY: up down build logs shell-api shell-db migrate seed reset-db lint fmt help
+.PHONY: up down build logs shell-api shell-db migrate seed reset-db lint fmt help \
+        test-tools test-tools-k test-tools-q
 
 # ── Docker ──────────────────────────────────────────────────────────────────
 up:
@@ -65,6 +66,23 @@ api-local:
 worker-local:
 	uv run celery -A api.celery_app worker --loglevel=info
 
+# ── Tests ─────────────────────────────────────────────────────────────────────
+# Prerequisites: `make up-d` (Docker must be running for the database)
+#                `make install` (uv venv must have dev dependencies)
+
+test-tools:
+	DATABASE_URL=postgresql://equitie:equitie@localhost:5432/equitie \
+		uv run pytest packages/ai/tests/ -v
+
+test-tools-q:
+	DATABASE_URL=postgresql://equitie:equitie@localhost:5432/equitie \
+		uv run pytest packages/ai/tests/ -q
+
+# Run a single test or group by keyword: make test-tools-k k=down_round
+test-tools-k:
+	DATABASE_URL=postgresql://equitie:equitie@localhost:5432/equitie \
+		uv run pytest packages/ai/tests/ -v -k "$(k)"
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 help:
 	@echo "make up          - Build & start all services (foreground)"
@@ -78,3 +96,7 @@ help:
 	@echo "make shell-db    - psql session"
 	@echo "make shell-api   - bash session in api container"
 	@echo "make install     - Install all packages locally with uv"
+	@echo ""
+	@echo "make test-tools  - Run all 26 tool edge-case tests (requires make up-d + make install)"
+	@echo "make test-tools-q - Same but quiet (pass/fail summary only)"
+	@echo "make test-tools-k k=<keyword> - Run tests matching a keyword, e.g. k=down_round"

@@ -187,7 +187,68 @@ The frontend dev server starts on http://localhost:3000 with hot-reload.
 
 ---
 
-## 8. Adding a database migration
+## 8. Running tool tests
+
+The test suite covers all 13 documented edge cases (zero holdings, pending allocations,
+multi-round companies, down rounds, write-offs, exits, partial secondaries, FX conversion,
+overdue fees, company disambiguation, admin fee currency, and more). Tests hit the live
+seeded database directly — no mocking.
+
+### Prerequisites
+
+```bash
+make up-d       # Docker must be running (tests need the database)
+make install    # install local Python environment including pytest
+```
+
+### Commands
+
+```bash
+# Run all 26 tests with full output
+make test-tools
+
+# Run with pass/fail summary only (quiet mode)
+make test-tools-q
+
+# Run a specific edge case by keyword
+make test-tools-k k=down_round
+make test-tools-k k=pending
+make test-tools-k k=partial_secondary
+make test-tools-k k=admin_fee
+make test-tools-k k=zero_holdings
+make test-tools-k k=disambiguation
+```
+
+### Available keyword filters
+
+| Keyword | Tests matched |
+|---|---|
+| `zero_holdings` | Zero-holdings investors (Henrik, Lara) |
+| `pending` | Pending/unfunded allocation (Grace Okafor) |
+| `multi_round` | Multi-round Forgecraft position (INV001) |
+| `share_price` | Per-investor effective share price discount |
+| `multi_currency` or `fx_conversion` | FX conversion to reporting currency |
+| `partial_contribution` | Partially funded deal (DEAL014) |
+| `exited` | Exited deal — MOIC from distributions only |
+| `written_off` | Written-off deal (Yappio) |
+| `down_round` | Down-round valuation (Qubrium Series B) |
+| `partial_secondary` | Partial secondary sale (Tallybook 30%) |
+| `overdue` | Overdue fee flagging |
+| `disambiguation` or `northpeak` | Similar company name disambiguation |
+| `admin_fee` | Admin fee always stored in USD on non-USD deals |
+| `error` or `unknown_investor` | Error handling for invalid inputs |
+
+### Test file locations
+
+```
+packages/ai/tests/
+├── conftest.py           # session-scoped DB fixture
+└── test_edge_cases.py    # 26 tests covering all 13 edge cases
+```
+
+---
+
+## 9. Adding a database migration
 
 ```bash
 # Inside the api container
