@@ -14,7 +14,7 @@ That experience stuck with me, and when I look at EquiTie, I see exactly the sam
 
 Before addressing specifics, a framing principle: AI should function as an organisational multiplier, not a feature. The goal is not to bolt a chatbot onto the product, but to build a system where humans and agents collaborate at every layer — business, product, and engineering — each doing what they do best.
 
-This shapes every architecture and hiring decision that follows. The RM bot is the customer-facing expression of that philosophy; the underlying data platform and agentic workflows are what make it sustainable and defensible.
+This shapes every architecture, product, features, roadmap and hiring decision that follows. The Relationship Manager(RM) bot/app is the customer-facing expression of that philosophy; the underlying data platform and agentic workflows are what make it sustainable and defensible.
 
 ---
 
@@ -36,7 +36,7 @@ This shapes every architecture and hiring decision that follows. The RM bot is t
 
 ### What stays with a human
 
-Human RMs retain ownership of: investment advice and recommendations, legal document signing, relationship exceptions and disputes, complex fund structuring questions, and final approval on all outbound investor communications. The bot drafts and prepares; the human decides and signs off. This is both a trust design and a regulatory requirement.
+Human RMs retain ownership of: investment advice and recommendations, legal document signing, relationship exceptions and disputes, complex fund structuring questions, and final approval/human-in-the-loop on all outbound investor communications. The bot drafts and prepares; the human decides and signs off. This is both a trust design and a regulatory requirement.
 
 ---
 
@@ -95,11 +95,11 @@ All source systems write to the **Bronze** layer (raw, immutable). Cleaning and 
 | System | Integration type | Data flowing in | Data flowing out |
 |---|---|---|---|
 | **Portfolio ledger** (internal) | Direct DB / API | Allocations, capital calls, distributions, valuations | — |
-| **Fund administration** (Carta / Juniper Square) | REST API + webhook | NAV, fee calculations, investor statements | Capital call notices |
+| **Fund administration** (Some existing SaaS integration) | REST API + webhook | NAV, fee calculations, investor statements | Capital call notices |
 | **CRM** (HubSpot or Salesforce) | Bidirectional API | Investor profile, interaction history | Bot conversation summaries, action items |
-| **KYC/AML** (Onfido or Jumio — buy) | REST API | KYC status, document verification results | Document requests, status updates |
+| **KYC/AML** (Some existing SaaS integration) | REST API | KYC status, document verification results | Document requests, status updates |
 | **E-signature** (DocuSign — buy) | REST API + webhook | Signed document status | Subscription docs, KYC forms |
-| **Comms** (SendGrid / email, push) | SDK | Delivery receipts | Notifications, nudges, reports |
+| **Comms** (email, push) | SDK | Delivery receipts | Notifications, nudges, reports |
 | **Calendar** (Google / Microsoft) | OAuth + API | Meeting schedules | Pre-meeting briefings |
 | **Market / valuation data** (PitchBook, Crunchbase) | API | Comparable valuations, company data | — |
 | **Document storage** | S3 + versioning | All uploaded documents | Signed, processed documents |
@@ -108,7 +108,7 @@ All source systems write to the **Bronze** layer (raw, immutable). Cleaning and 
 
 ## 4. AI Approach and Safety
 
-### Core principle (carried from prototype)
+### Core principle
 
 **LLM does language. Python does maths.** The model never generates SQL, never does arithmetic, and never invents figures. Every number in a response originates from a deterministic tool function. This is non-negotiable and the single most important guardrail against hallucination in a financial context.
 
@@ -211,7 +211,6 @@ The founding team (lead engineer + hire #1 and #2) does the heavy lifting in mon
 | **Customer data used for LLM training** | Medium | Enterprise zero-retention agreements; on-prem open-source fallback for highest-sensitivity data |
 | **Regulatory / compliance exposure** | High | No investment advice guardrail from day one; SOC 2 in scope from month one, not bolted on later |
 | **Hallucination on financial data** | Medium | Deterministic tool layer; LLM never does arithmetic; fidelity eval suite catches regressions |
-| **Scope creep** | High | Phased plan with shipped milestones; defer nice-to-haves (voice, market data) to Phase 3 |
 | **Investor trust** | Medium | Human-in-the-loop for all outbound comms; clear "drafted by AI, approved by your RM" labelling |
 
 ### Build vs buy decisions
@@ -233,9 +232,9 @@ The founding team (lead engineer + hire #1 and #2) does the heavy lifting in mon
 | Team (6 hires, phased) | ~£400–550k |
 | Cloud infrastructure (AWS/GCP, Kubernetes, S3) | ~£3–6k/month → £20–35k total |
 | LLM inference (Anthropic API) | Starts ~£1–2k/month; target reduction to ~£0.50/1,000 queries via Haiku routing and fine-tuning |
-| Third-party services (Auth0, DocuSign, KYC, Datadog) | ~£3–5k/month → £20–30k total |
-| SOC 2 audit preparation | ~£15–25k one-time |
-| **Six-month total** | **~£500–650k** |
+| Third-party services | ~£3–5k/month → £20–30k total |
+| SOC 2 audit preparation | ~£5-10k one-time |
+| **Six-month total** | **~£500–600k** |
 
 **Token economics:** LLM cost scales with usage, so pricing strategy must reflect this. Options: (a) per-query consumption model billed to the fund, (b) flat-fee tier per investor, (c) hybrid where basic Q&A is included and heavy automation (report generation, bulk comms) is metered. Clarity on token ownership and usage policy is a commercial requirement that should be resolved in Phase 1, not deferred.
 
