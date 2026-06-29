@@ -7,6 +7,40 @@
 ## Walkthrough
 You can find the video walkthrough here : https://drive.google.com/file/d/1UGFZS6406g2Lp8R7QsIFL_du21LkOokg/view?usp=sharing
 
+## Prerequisites
+
+You need **Docker** and **Make** installed before running the project.
+
+### macOS
+
+```bash
+# Docker Desktop (includes Docker Compose)
+brew install --cask docker
+
+# Make (included with Xcode Command Line Tools)
+xcode-select --install
+```
+
+Or download Docker Desktop directly from https://www.docker.com/products/docker-desktop
+
+### Windows
+
+**Docker Desktop:**
+Download and install from https://www.docker.com/products/docker-desktop
+Enable WSL 2 backend during installation (recommended).
+
+**Make:**
+The easiest option is via [Chocolatey](https://chocolatey.org):
+```powershell
+# Run in PowerShell as Administrator
+choco install make
+```
+Alternatively, install [Git for Windows](https://gitforwindows.org) — it includes `make` via Git Bash.
+
+> All `make` commands should be run from the repo root. On Windows, use Git Bash or WSL 2 terminal, not PowerShell.
+
+---
+
 ## Quick Start
 
 ```bash
@@ -15,7 +49,7 @@ git clone https://github.com/narendracode/equitie.git && cd equitie
 
 # 2. Copy environment variables
 cp .env.example .env
-# Add your anthropic, langsmith keys to .env
+# Add your ANTHROPIC_API_KEY (and optionally LANGSMITH_API_KEY) to .env
 
 # 3. Start all services
 make up
